@@ -4,6 +4,10 @@
   "description": "Typed client and published contract for the Lobstack Gateway: OpenAI-compatible inference with a per-request receipt.",
   "type": "module",
   "license": "MIT",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
