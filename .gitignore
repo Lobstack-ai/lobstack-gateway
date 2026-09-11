@@ -1,0 +1,16 @@
+node_modules/
+dist/
+*.tsbuildinfo
+
+# editors / OS
+.DS_Store
+.idea/
+.vscode/
+
+# never commit a credential
+.env
+.env.*
+*.key
+
+# npm pack output
+*.tgz

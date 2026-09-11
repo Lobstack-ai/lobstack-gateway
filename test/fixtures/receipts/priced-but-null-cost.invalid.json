@@ -1,0 +1,12 @@
+{
+  "request_id": "44b1c2d3-8e90-4f12-a3b4-5c6d7e8f9012",
+  "served_model": "claude-sonnet-5",
+  "requested_model": "auto",
+  "routed": true,
+  "cost_usd": null,
+  "savings_usd": null,
+  "priced": true,
+  "baseline_model": null,
+  "baseline_reason": null,
+  "baseline_cost_usd": null
+}

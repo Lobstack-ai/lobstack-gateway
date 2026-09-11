@@ -1,0 +1,150 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/Lobstack-ai/lobstack-gateway/main/spec/x_lobstack.schema.json",
+  "title": "x_lobstack receipt",
+  "description": "The Lobstack Gateway receipt: what a request cost, what served it, and what any reported saving was measured against.\n\nWHERE IT APPEARS. On a streamed response (`stream: true`) this object is the `x_lobstack` member of the FINAL `chat.completion.chunk` — the frame with an empty `choices` array that also carries `usage`, sent after the chunk carrying `finish_reason` and before `data: [DONE]`. On a buffered response the same facts are carried in `x-lobstack-*` response headers instead, because a buffered response has nowhere else to put them; the header spellings are given in `x-header` on each property below. There is no third transport.\n\nWHY IT IS SEPARATE FROM `usage`. `usage` keeps the exact OpenAI shape so that a client which has never heard of Lobstack parses it unchanged. Everything Lobstack-specific hangs off `x_lobstack`, which such a client ignores.\n\nFORWARD COMPATIBILITY. Members not described here MAY be added. A client MUST ignore members it does not recognise, and MUST NOT treat their presence as an error.",
+  "type": "object",
+  "required": [
+    "request_id",
+    "served_model",
+    "requested_model",
+    "routed",
+    "cost_usd",
+    "savings_usd",
+    "priced",
+    "baseline_model",
+    "baseline_reason",
+    "baseline_cost_usd"
+  ],
+  "properties": {
+    "request_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The id of the trace row for this request, also returned as the `x-lobstack-request-id` response header and as `error.request_id` on a failure. It is allocated before anything can fail, so even a rejected request has one. Quoting it identifies the request exactly.",
+      "x-header": "x-lobstack-request-id",
+      "examples": ["8f2b1e0c-4d5a-4b91-9c3e-6a7f0d2b5c41"]
+    },
+    "served_model": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The model key that actually served the request. A client MUST NOT assume this equals the model it asked for: a named model is a ceiling, not a command, and the router may serve something cheaper.",
+      "x-header": "x-lobstack-model",
+      "examples": ["gemini-3.8-flash"]
+    },
+    "requested_model": {
+      "type": "string",
+      "minLength": 1,
+      "description": "What the caller asked for: a model key, or the literal string `auto`. On a buffered response this has no header — the caller's own request is the only record of it.",
+      "examples": ["auto", "claude-opus-5"]
+    },
+    "routed": {
+      "type": "boolean",
+      "description": "True when `requested_model` was `auto`, and true when the served model differs from the one the caller named.",
+      "x-header": "x-lobstack-routed"
+    },
+    "cost_usd": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "description": "WHAT THE CALLER OWES for these tokens, in USD, priced at the moment the request was served.\n\n`null` means UNPRICED: the served model is not in the price registry, or the request was never metered (a stream that failed before metering, for instance). `null` does NOT mean free and does NOT mean zero.\n\nA client MUST NOT render `null` as `0`, `$0.00`, or any other currency amount, and MUST NOT substitute a default. It MUST either render the value as unknown or omit the figure. Clients MUST NOT compute this figure themselves by multiplying token counts against a local copy of the rate card: a local copy drifts from the catalogue, and a model it does not know silently prices at zero.\n\nOn a buffered response the header carries an EMPTY STRING where this member is `null`. `Number(\"\")` is `0`, so parsers MUST test for the empty string before converting.",
+      "x-header": "x-lobstack-cost-usd",
+      "examples": [0.003281, null]
+    },
+    "savings_usd": {
+      "type": ["number", "null"],
+      "description": "`baseline_cost_usd` minus `cost_usd`: what these exact token counts would have cost on the baseline model, minus what they actually cost. `null` when there is no baseline, and therefore no honest subtraction to report.\n\nA client MUST NOT render this figure without also rendering `baseline_reason`, because the two reasons are different claims. See `baseline_reason`.",
+      "x-header": "x-lobstack-savings-usd",
+      "examples": [0.018594, null]
+    },
+    "priced": {
+      "type": "boolean",
+      "description": "False when the request could not be priced, in which case `cost_usd` is `null`. True when it was priced, in which case `cost_usd` is a number. It exists so a client can tell \"we could not price this\" apart from any other reason a figure might be missing.",
+      "x-header": "x-lobstack-priced"
+    },
+    "baseline_model": {
+      "type": ["string", "null"],
+      "description": "The model `savings_usd` was measured against. `null` exactly when `baseline_reason` is `null`.",
+      "x-header": "x-lobstack-baseline-model",
+      "examples": ["claude-opus-5", null]
+    },
+    "baseline_reason": {
+      "type": ["string", "null"],
+      "enum": ["named", "plan_ceiling", null],
+      "description": "Why `baseline_model` is the comparison, and therefore what `savings_usd` means. The two non-null values are NOT interchangeable and a client MUST NOT present them identically.\n\n`named` — the caller asked for `baseline_model` and the Gateway served something else. The comparison is like-for-like against the caller's own request, and `savings_usd` is a measurement. This is the only value for which a client MAY use unqualified language such as \"saved\".\n\n`plan_ceiling` — the caller sent `auto` and named nothing. `baseline_model` is the most expensive model the caller's plan may reach: what they would have paid had they asked for the best one. It is a real subtraction between two real prices, and it is also the most flattering number available to the seller, and the caller never asked for that model. A client MUST label such a figure as a comparison against a plan ceiling, and MUST NOT present it as a saving against what the caller requested.\n\n`null` — there is no honest comparison, and `savings_usd`, `baseline_model` and `baseline_cost_usd` are all `null`. This occurs when the caller named the model that was served (nothing was routed away from), when either model cannot be priced, and when an `auto` request comes from a plan with no defined ceiling.",
+      "x-header": "x-lobstack-baseline-reason"
+    },
+    "baseline_cost_usd": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "description": "What `baseline_model` would have charged for these exact token counts, priced on the same basis as `cost_usd` so that the subtraction is between two comparable numbers. `null` exactly when `baseline_reason` is `null`.",
+      "x-header": "x-lobstack-baseline-usd",
+      "examples": [0.021875, null]
+    }
+  },
+  "allOf": [
+    {
+      "$comment": "priced and cost_usd agree in both directions: priced true implies a number, priced false implies null. A client that trusts one need not re-derive the other.",
+      "if": { "properties": { "priced": { "const": true } }, "required": ["priced"] },
+      "then": { "properties": { "cost_usd": { "type": "number" } } },
+      "else": { "properties": { "cost_usd": { "type": "null" } } }
+    },
+    {
+      "$comment": "The three baseline members travel together. A reason implies both a model and a priced baseline; no reason implies all three are null, and no saving is reported.",
+      "if": {
+        "properties": { "baseline_reason": { "type": "string" } },
+        "required": ["baseline_reason"]
+      },
+      "then": {
+        "properties": {
+          "baseline_model": { "type": "string", "minLength": 1 },
+          "baseline_cost_usd": { "type": "number" }
+        },
+        "required": ["baseline_model", "baseline_cost_usd"]
+      },
+      "else": {
+        "properties": {
+          "baseline_model": { "type": "null" },
+          "baseline_cost_usd": { "type": "null" },
+          "savings_usd": { "type": "null" }
+        }
+      }
+    }
+  ],
+  "examples": [
+    {
+      "request_id": "8f2b1e0c-4d5a-4b91-9c3e-6a7f0d2b5c41",
+      "served_model": "gemini-3.8-flash",
+      "requested_model": "claude-opus-5",
+      "routed": true,
+      "cost_usd": 0.003281,
+      "savings_usd": 0.018594,
+      "priced": true,
+      "baseline_model": "claude-opus-5",
+      "baseline_reason": "named",
+      "baseline_cost_usd": 0.021875
+    },
+    {
+      "request_id": "2f1c8a44-9b0e-4f11-8f77-c0a9d1b3e552",
+      "served_model": "claude-haiku-4-5",
+      "requested_model": "auto",
+      "routed": true,
+      "cost_usd": 0.0011,
+      "savings_usd": 0.0044,
+      "priced": true,
+      "baseline_model": "claude-fable-5-1",
+      "baseline_reason": "plan_ceiling",
+      "baseline_cost_usd": 0.0055
+    },
+    {
+      "request_id": "c41d9f02-77ab-4a6e-9d15-3b8e5c7a1042",
+      "served_model": "llama-4-scout-local",
+      "requested_model": "auto",
+      "routed": true,
+      "cost_usd": null,
+      "savings_usd": null,
+      "priced": false,
+      "baseline_model": null,
+      "baseline_reason": null,
+      "baseline_cost_usd": null
+    }
+  ]
+}

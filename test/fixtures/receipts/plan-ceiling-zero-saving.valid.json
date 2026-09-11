@@ -1,0 +1,12 @@
+{
+  "request_id": "5a77c110-2e3f-4c88-b0a1-99e2d4f6c3aa",
+  "served_model": "claude-fable-5-1",
+  "requested_model": "auto",
+  "routed": true,
+  "cost_usd": 0.0055,
+  "savings_usd": 0,
+  "priced": true,
+  "baseline_model": "claude-fable-5-1",
+  "baseline_reason": "plan_ceiling",
+  "baseline_cost_usd": 0.0055
+}

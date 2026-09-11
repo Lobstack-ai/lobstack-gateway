@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 20 is the floor `engines` claims; 22 is what most people run. A claim
+        # in package.json that nothing tests is a guess.
+        node: ["20", "22"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - run: npm ci
+
+      # Typecheck, then validate both spec documents, then the tests — in that
+      # order, so a broken spec is reported before a test failure that is really
+      # a symptom of it.
+      - run: npm run verify

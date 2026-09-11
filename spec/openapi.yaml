@@ -1,0 +1,1336 @@
+openapi: 3.1.0
+
+info:
+  title: Lobstack Gateway
+  version: "1.0.0"
+  summary: OpenAI-compatible inference with a per-request receipt.
+  description: |
+    The Lobstack Gateway serves chat completions across many model providers
+    behind one OpenAI-compatible endpoint, and returns a **receipt** with every
+    request: what served it, what it cost, and what any reported saving was
+    measured against.
+
+    This document is the contract. It is published so that a client can be
+    written against the receipt rather than against one vendor's SDK, and so
+    that another vendor could implement the same receipt. The routing engine
+    that chooses a model is not described here and is not part of the contract:
+    a client MUST treat the served model as an output, never as something it can
+    predict.
+
+    ## Conformance
+
+    The key words MUST, MUST NOT, SHOULD, SHOULD NOT and MAY are to be
+    interpreted as described in RFC 2119.
+
+    A conforming client MUST observe the four rules below. Each of them has cost
+    somebody real money.
+
+    ### 1. Call the host that answers, with the `www`
+
+    The base URL is `https://www.lobstack.ai/api/gateway/v1`.
+
+    `https://lobstack.ai` — the apex, without `www` — answers with a `307` to
+    the `www` host. RFC 9110 §15.4 requires a client to remove the
+    `Authorization` header when a redirect changes the host, so a client that
+    follows that redirect arrives with no credential at all. The Gateway cannot
+    distinguish it from a request that never had one, and answers a perfectly
+    valid key with `401 missing credentials` — an error that names the wrong
+    thing and sends the caller to look at a key that is fine.
+
+    A conforming client MUST NOT follow a redirect that changes scheme, host or
+    port. It SHOULD surface such a redirect as an error naming the credential
+    loss, rather than retrying or reporting the resulting `401` verbatim.
+
+    ### 2. The receipt arrives *after* `finish_reason`
+
+    On a streamed response the order of events is:
+
+    1. a chunk carrying `delta.role`,
+    2. content delta chunks,
+    3. a chunk carrying `finish_reason`,
+    4. a chunk with an **empty `choices` array**, carrying `usage` and
+       `x_lobstack`,
+    5. `data: [DONE]`.
+
+    Step 4 is the only place a streamed response reports what it cost, because
+    the response headers were flushed before the provider had counted a single
+    token. A reader that stops on `finish_reason` — the obvious thing to write —
+    silently discards the thing this API exists to provide.
+
+    A conforming client MUST continue reading until `data: [DONE]` or the end of
+    the body. It MUST NOT require `stream_options.include_usage`: that field is
+    not read, and the final chunk is sent unconditionally.
+
+    ### 3. `cost_usd: null` means unpriced, not free
+
+    A cost of `null` means the Gateway could not price the request — the served
+    model is not in the price registry, or the request was never metered. It
+    does not mean zero.
+
+    A client MUST NOT render a null cost as `0`, `$0.00` or any other currency
+    amount, and MUST NOT substitute a default. On the buffered path the same
+    fact is transported as an **empty header value**: `x-lobstack-cost-usd: `.
+    Because `Number("")` is `0` in several languages, a client MUST test for the
+    empty string before converting.
+
+    A client MUST NOT compute the cost itself from token counts and a local copy
+    of the rate card. A local copy drifts from the catalogue, and a model it does
+    not know prices at zero — which is indistinguishable, on screen, from a free
+    request.
+
+    ### 4. A plan-ceiling comparison is not a like-for-like saving
+
+    `savings_usd` is a subtraction, and a subtraction is honest only when the
+    reader can see what the first operand was. `baseline_reason` says which of
+    two very different claims is being made:
+
+    | `baseline_reason` | The caller sent | The baseline is | What the figure means |
+    | --- | --- | --- | --- |
+    | `named` | an explicit model key | the model they named | a measurement against their own request |
+    | `plan_ceiling` | `auto` | the priciest model their plan may reach | what they would have paid had they asked for the best one — which they did not |
+    | `null` | anything with no honest comparison | none | no saving is reported |
+
+    A conforming client MUST render `baseline_reason` alongside any saving it
+    displays, or display no saving. It MUST NOT label a `plan_ceiling`
+    comparison in the same terms as a `named` one.
+
+    ## Transports for the receipt
+
+    The same facts travel by two routes, because the two response shapes have
+    different physics:
+
+    - **Buffered** (`stream: false`) — `x-lobstack-*` response headers, money
+      included.
+    - **Streamed** (`stream: true`) — routing and quota headers are present; the
+      money is NOT, and arrives on the final SSE frame under `x_lobstack`.
+
+    `spec/x_lobstack.schema.json` is the JSON Schema for that object, and names
+    the equivalent header for every member.
+
+  contact:
+    name: Lobstack
+    url: https://www.lobstack.ai/docs/gateway
+  license:
+    name: MIT
+    identifier: MIT
+
+externalDocs:
+  description: Published Gateway documentation
+  url: https://www.lobstack.ai/docs/gateway
+
+servers:
+  - url: https://www.lobstack.ai/api/gateway/v1
+    description: |
+      Production. Note the `www`: the apex redirects, and a redirect across
+      hosts strips `Authorization` (RFC 9110 §15.4). Never call
+      `https://lobstack.ai/api/gateway/v1`.
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Inference
+    description: The only endpoint that spends tokens.
+  - name: Catalogue
+    description: What the Gateway serves, and what it would do with a prompt. Both public.
+  - name: Usage
+    description: Org-scoped spend, traces and latency. Not under the Gateway base URL.
+
+paths:
+  /chat/completions:
+    post:
+      operationId: createChatCompletion
+      tags: [Inference]
+      summary: Create a chat completion
+      description: |
+        OpenAI-compatible chat completions, buffered or streamed.
+
+        **Only the fields in the request schema are read.** `top_p`,
+        `tool_choice`, `n`, `stop`, `response_format`, `seed`, `logprobs` and
+        `stream_options` are accepted and dropped silently: the request succeeds
+        without them, nothing errors, and no header reports it. A client MUST NOT
+        rely on any parameter absent from the schema having an effect.
+
+        **A named model is a ceiling, not a command.** A simple request sent to a
+        flagship model may be served by a cheaper one. Read `model` on the
+        response, or `x-lobstack-model`, for what actually served it.
+
+        **There is no idempotency key.** A request that timed out may still have
+        completed at the provider, and those tokens are metered because they
+        were really generated. A client that retries automatically can therefore
+        produce a second answer and a second charge; for expensive calls, read
+        the trace by request id before retrying.
+      security:
+        - bearerAuth: []
+        - agentSecret: []
+          agentId: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ChatCompletionRequest" }
+            examples:
+              buffered:
+                summary: A buffered request naming a model
+                value:
+                  model: claude-sonnet-5
+                  max_tokens: 512
+                  messages:
+                    - { role: system, content: Answer in one sentence. }
+                    - { role: user, content: Why did the deploy roll back? }
+              streamed:
+                summary: A streamed request letting the router choose
+                value:
+                  model: auto
+                  stream: true
+                  messages:
+                    - { role: user, content: List three causes of a rollback. }
+      responses:
+        "200":
+          description: |
+            A completion. The media type depends on `stream`:
+            `application/json` for a buffered response, `text/event-stream` for
+            a streamed one.
+
+            The cost headers (`x-lobstack-cost-usd`, `x-lobstack-savings-usd`,
+            `x-lobstack-priced`, `x-lobstack-metered` and the three baseline
+            headers) are present ONLY on the buffered response. On a stream they
+            are absent by construction and the same figures arrive on the final
+            SSE frame under `x_lobstack`.
+
+            A streamed response that fails part-way through is still `200`: the
+            status and headers are long gone by then, so the failure is reported
+            as an error object inside the stream, followed by `data: [DONE]`.
+            The trace row records the real status.
+          headers:
+            x-lobstack-request-id: { $ref: "#/components/headers/RequestId" }
+            x-lobstack-model: { $ref: "#/components/headers/Model" }
+            x-lobstack-tier: { $ref: "#/components/headers/Tier" }
+            x-lobstack-complexity: { $ref: "#/components/headers/Complexity" }
+            x-lobstack-routed: { $ref: "#/components/headers/Routed" }
+            x-lobstack-mode: { $ref: "#/components/headers/Mode" }
+            x-lobstack-principal: { $ref: "#/components/headers/Principal" }
+            x-lobstack-dropped-params: { $ref: "#/components/headers/DroppedParams" }
+            x-lobstack-savings-pct: { $ref: "#/components/headers/SavingsPct" }
+            x-lobstack-cost-usd: { $ref: "#/components/headers/CostUsd" }
+            x-lobstack-savings-usd: { $ref: "#/components/headers/SavingsUsd" }
+            x-lobstack-priced: { $ref: "#/components/headers/Priced" }
+            x-lobstack-metered: { $ref: "#/components/headers/Metered" }
+            x-lobstack-baseline-model: { $ref: "#/components/headers/BaselineModel" }
+            x-lobstack-baseline-reason: { $ref: "#/components/headers/BaselineReason" }
+            x-lobstack-baseline-usd: { $ref: "#/components/headers/BaselineUsd" }
+            x-lobstack-quota-meter: { $ref: "#/components/headers/QuotaMeter" }
+            x-lobstack-quota-allowance-usd: { $ref: "#/components/headers/QuotaAllowanceUsd" }
+            x-lobstack-quota-spent-usd: { $ref: "#/components/headers/QuotaSpentUsd" }
+            x-lobstack-quota-remaining-usd: { $ref: "#/components/headers/QuotaRemainingUsd" }
+            x-lobstack-quota-limit: { $ref: "#/components/headers/QuotaLimit" }
+            x-lobstack-quota-used: { $ref: "#/components/headers/QuotaUsed" }
+            x-lobstack-quota-remaining: { $ref: "#/components/headers/QuotaRemaining" }
+            x-lobstack-quota-credits: { $ref: "#/components/headers/QuotaCredits" }
+            x-lobstack-quota-resets: { $ref: "#/components/headers/QuotaResets" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChatCompletion" }
+              examples:
+                completion:
+                  $ref: "#/components/examples/BufferedCompletion"
+            text/event-stream:
+              schema:
+                description: |
+                  The body is a sequence of SSE events separated by blank lines.
+                  Each event is one `data:` line whose payload is a JSON object
+                  of one of the shapes below, except the last event, which is the
+                  literal `data: [DONE]`.
+
+                  A JSON object CAN be split across TCP reads, so a client MUST
+                  buffer across reads rather than parsing each read on its own —
+                  and it MUST keep reading past the chunk carrying
+                  `finish_reason`, because the receipt comes after it:
+
+                  ```text
+                  data: {"id":"chatcmpl-8f2b","object":"chat.completion.chunk","created":1789000000,"model":"gemini-3.1-flash-lite","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
+
+                  data: {"id":"chatcmpl-8f2b","object":"chat.completion.chunk","created":1789000000,"model":"gemini-3.1-flash-lite","choices":[{"index":0,"delta":{"content":"Western European"},"finish_reason":null}]}
+
+                  data: {"id":"chatcmpl-8f2b","object":"chat.completion.chunk","created":1789000000,"model":"gemini-3.1-flash-lite","choices":[{"index":0,"delta":{"content":" Summer Time."},"finish_reason":null}]}
+
+                  data: {"id":"chatcmpl-8f2b","object":"chat.completion.chunk","created":1789000000,"model":"gemini-3.1-flash-lite","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+                  data: {"id":"chatcmpl-8f2b","object":"chat.completion.chunk","created":1789000000,"model":"gemini-3.1-flash-lite","choices":[],"usage":{"prompt_tokens":14,"completion_tokens":9,"total_tokens":23},"x_lobstack":{"request_id":"8f2b1e0c-4d5a-4b91-9c3e-6a7f0d2b5c41","served_model":"gemini-3.1-flash-lite","requested_model":"claude-opus-5","routed":true,"cost_usd":0.000017,"savings_usd":0.000352,"priced":true,"baseline_model":"claude-opus-5","baseline_reason":"named","baseline_cost_usd":0.000369}}
+
+                  data: [DONE]
+                  ```
+                oneOf:
+                  - $ref: "#/components/schemas/ChatCompletionChunk"
+                  - $ref: "#/components/schemas/StreamErrorFrame"
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/AuthError" }
+        "402": { $ref: "#/components/responses/QuotaExhausted" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "502": { $ref: "#/components/responses/ProviderError" }
+        "503": { $ref: "#/components/responses/NotConfigured" }
+        "504": { $ref: "#/components/responses/Timeout" }
+
+  /models:
+    get:
+      operationId: listModels
+      tags: [Catalogue]
+      summary: List the models the Gateway serves
+      description: |
+        OpenAI-shaped model listing, with Lobstack extensions: `label`, `tier`,
+        `context_window`, `price_per_mtok` and `managed`. `created` is not
+        returned.
+
+        Public. No credential is required; one sent anyway is ignored. The
+        listing is the same for every caller, so it says nothing about which
+        models a given plan may reach — `POST /route-preview` answers that.
+      security:
+        - {}
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The catalogue.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ModelList" }
+              examples:
+                models:
+                  $ref: "#/components/examples/ModelList"
+
+  /route-preview:
+    post:
+      operationId: previewRouting
+      tags: [Catalogue]
+      summary: Preview a routing decision without spending a token
+      description: |
+        Answers "what would the router do with this request?" using the same
+        selection function and the same price registry the live path uses, so the
+        answer is the decision rather than a simulation of it.
+
+        Public and unauthenticated: it runs no inference, calls no provider,
+        writes nothing and reads no per-caller state. A client SHOULD NOT send a
+        credential here.
+
+        Every figure is an ESTIMATE and the response says so in
+        `token_estimate.estimated`. Token counts are approximated at roughly four
+        characters per token, and output length is unknowable before generation.
+        A client MUST NOT present `cost_usd` from this endpoint as a charge; the
+        billed figure comes from the provider's own usage block on a real
+        request.
+      security:
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RoutePreviewRequest" }
+            examples:
+              preview:
+                value:
+                  prompt: Rewrite this commit message in the imperative mood.
+                  requested_model: claude-opus-5
+                  plan_tier: pro
+      responses:
+        "200":
+          description: The decision the router would make.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RoutePreview" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+
+  /usage:
+    servers:
+      - url: https://www.lobstack.ai/api/v1
+        description: |
+          The usage endpoint is a PLATFORM endpoint and is NOT under the Gateway
+          base URL: it is `/api/v1/usage`, not `/api/gateway/v1/usage`.
+    get:
+      operationId: getUsage
+      tags: [Usage]
+      summary: Org-scoped usage, traces and latency
+      description: |
+        Reads the trace table for the organisation the credential belongs to.
+
+        Two credentials work: a browser session (which the Console uses) and an
+        API key carrying the `usage:read` scope. Both return identical numbers
+        from identical arithmetic, rather than each computing their own.
+
+        `summary.cost_usd` sums unpriced rows as zero, because that is the only
+        arithmetic available — it is therefore a FLOOR, not a total, whenever
+        `summary.unpriced_requests` is non-zero. `truncated: true` means the row
+        cap bound and the sums are a floor for that reason instead.
+      parameters:
+        - name: range
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: ["7d", "14d", "30d", "90d"]
+            default: "7d"
+          description: An unrecognised value falls back to `7d` rather than erroring.
+        - name: group_by
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [day, model, key, agent]
+            default: day
+        - name: agent_id
+          in: query
+          required: false
+          schema: { type: string }
+        - name: key_id
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: |
+            Usage for the range. Two shapes: `enabled: true` with a summary, or
+            `enabled: false` when the deployment has not applied the
+            request-tracing migration. The second is deliberately a `200` with a
+            reason rather than a `500` that reads like an outage.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UsageReport" }
+        "400":
+          description: No organization context could be resolved for a session caller.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformError" }
+        "401":
+          description: |
+            No credential. Note that this endpoint's error body is the platform
+            shape (`{"error": "…"}`), not the Gateway shape.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformError" }
+        "403":
+          description: The key lacks the `usage:read` scope, or the caller is not a member of the org.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformError" }
+        "500":
+          description: The trace table could not be read.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformError" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: |
+        An API key as a bearer token.
+
+        Keys are shaped `lsk_live_` or `lsk_test_`, then an 8-character hex
+        selector, then a 48-character hex secret — 56 hex characters in total.
+        The selector is not secret and is safe to log or display; the rest is
+        shown once, at minting, and is never recoverable.
+
+        Scopes are fixed at mint time. `inference` is required for
+        `POST /chat/completions`; `usage:read` for `GET /api/v1/usage`. A key
+        without the required scope is a `403` naming the missing scope.
+
+        Two legacy credentials are also accepted on `/chat/completions`: a
+        per-agent gateway token as a bearer token, and the platform agent secret
+        as `x-agent-secret` together with `x-agent-id`. Both belong to deployed
+        agent virtual machines. A new client SHOULD use an API key.
+      bearerFormat: lsk_live_<8 hex><48 hex>
+
+    agentSecret:
+      type: apiKey
+      in: header
+      name: x-agent-secret
+      description: |
+        Legacy. The platform agent secret, which a deployed agent's bridge holds
+        so that managed inference keeps working when its gateway token is stale.
+        MUST be sent together with `x-agent-id`.
+
+    agentId:
+      type: apiKey
+      in: header
+      name: x-agent-id
+      description: Legacy. The agent this request is made on behalf of. Accompanies `x-agent-secret`.
+
+  headers:
+    RequestId:
+      description: |
+        The id of the trace row. Allocated before anything can fail, so even a
+        `401` carries one. It is the same value as `error.request_id` on a
+        failure and `x_lobstack.request_id` on a stream.
+      schema: { type: string }
+      example: 8f2b1e0c-4d5a-4b91-9c3e-6a7f0d2b5c41
+    Model:
+      description: The model key that actually served the request. Not necessarily the one requested.
+      schema: { type: string }
+      example: gemini-3.8-flash
+    Tier:
+      description: The capability tier the router's score landed in.
+      schema:
+        type: string
+        enum: [nano, small, standard, premium, flagship]
+    Complexity:
+      description: The heuristic score for the last user message, 0–100.
+      schema: { type: integer, minimum: 0, maximum: 100 }
+    Routed:
+      description: True when `auto` was sent, and true when the served model differs from the one named.
+      schema: { type: string, enum: ["true", "false"] }
+    Mode:
+      description: Whose provider key paid for the tokens. `byok` traffic is never marked up.
+      schema: { type: string, enum: [managed, byok] }
+    Principal:
+      description: Which credential authenticated the call.
+      schema: { type: string, enum: [api_key, gateway_token, agent_secret] }
+    DroppedParams:
+      description: |
+        Comma-separated sampling parameters the caller sent that were NOT
+        forwarded to the provider. Present only when something was dropped.
+
+        One case is dropped without this header: OpenAI's GPT-5 and o-series
+        models accept only their default temperature, and the adapter omits the
+        field for them silently. A client that needs to know whether sampling
+        applied on those models MUST assume it did not.
+      schema: { type: string }
+      example: temperature
+    SavingsPct:
+      description: |
+        The router's tier-multiplier estimate, 0–100: one minus the selected
+        tier's cost multiplier over the ceiling tier's.
+
+        An estimate about tiers, NOT a measurement about dollars. It is not a
+        rounded `x-lobstack-savings-usd`, the two MUST NOT be added together,
+        and a client SHOULD NOT present it as an amount saved. It is present on
+        every response, including streamed ones.
+      schema: { type: number, minimum: 0, maximum: 100 }
+    CostUsd:
+      description: |
+        What the caller owes for these tokens, in USD to six decimal places.
+
+        **An EMPTY STRING when the request could not be priced.** Not `0`. A
+        client MUST test for the empty string before converting, because
+        `Number("")` is `0` and that turns "unpriced" into "free".
+
+        Buffered responses only: on a stream the headers are flushed before the
+        provider has counted a token, and the figure arrives on the final SSE
+        frame instead.
+      schema: { type: string }
+      example: "0.003281"
+    SavingsUsd:
+      description: |
+        `x-lobstack-baseline-usd` minus `x-lobstack-cost-usd`, in USD to six
+        decimal places. An empty string when there is no baseline.
+
+        A client MUST NOT display this without `x-lobstack-baseline-reason`.
+      schema: { type: string }
+      example: "0.018594"
+    Priced:
+      description: False when the served model is not in the price registry, so the cost header is empty rather than zero.
+      schema: { type: string, enum: ["true", "false"] }
+    Metered:
+      description: |
+        False when the ledger write failed. The caller has their answer and the
+        request is not recorded; the figures in the other headers are still
+        correct for this response.
+      schema: { type: string, enum: ["true", "false"] }
+    BaselineModel:
+      description: The model a saving was measured against. Sent only when a baseline exists, together with the other two baseline headers.
+      schema: { type: string }
+      example: claude-opus-5
+    BaselineReason:
+      description: |
+        Why that model is the comparison. `named` is a like-for-like measurement
+        against a model the caller asked for; `plan_ceiling` is a comparison
+        against the priciest model the caller's plan allows, which the caller
+        did NOT ask for.
+
+        A client MUST render this next to any saving, and MUST NOT present the
+        two values in the same terms. See rule 4 in the introduction.
+      schema: { type: string, enum: [named, plan_ceiling] }
+    BaselineUsd:
+      description: What the baseline model would have charged for these exact token counts, priced on the same basis as the cost header.
+      schema: { type: string }
+      example: "0.021875"
+    QuotaMeter:
+      description: |
+        Which of three allowances applied. A client MUST branch on this before
+        reading any other quota header: the counters are not interchangeable.
+
+        `spend` — a plan that includes dollars of model spend.
+        `requests` — BYOK, where the caller pays their own provider, so requests
+        rather than dollars are the honest meter.
+        `legacy` — a subscription bought on the older messages-per-month tiers,
+        counted exactly as it always was.
+
+        A spend meter sends dollars and NO request counters, and vice versa. A
+        zero in `x-lobstack-quota-limit` would read as "no allowance" to a client
+        that had not checked which meter it was on, so the counters are absent
+        rather than zero.
+      schema: { type: string, enum: [spend, requests, legacy] }
+    QuotaAllowanceUsd:
+      description: "`spend` only. Included allowance, plus purchased top-ups, plus credited savings."
+      schema: { type: string }
+    QuotaSpentUsd:
+      description: "`spend` only. Consumed so far this period."
+      schema: { type: string }
+    QuotaRemainingUsd:
+      description: "`spend` only. Never negative."
+      schema: { type: string }
+    QuotaLimit:
+      description: "`requests` and `legacy` only. Included requests or messages for the period."
+      schema: { type: integer }
+    QuotaUsed:
+      description: |
+        `requests` and `legacy` only. Consumed so far. A request allowance counts
+        this calendar month's traced requests that returned below 400, so a
+        provider outage does not consume the allowance.
+      schema: { type: integer }
+    QuotaRemaining:
+      description: "`requests` and `legacy` only. Limit minus used, plus credits. Never negative."
+      schema: { type: integer }
+    QuotaCredits:
+      description: "`requests` and `legacy` only, and only when greater than zero. Purchased top-up remaining, consumed after the included allowance."
+      schema: { type: integer }
+    QuotaResets:
+      description: When the current period ends, ISO 8601. Any meter, when it is known.
+      schema: { type: string, format: date-time }
+    RetryAfter:
+      description: |
+        Seconds until the allowance resets, computed from the period end — so on
+        a `402` it is usually days rather than seconds. A client MUST NOT treat
+        it as a backoff hint: nothing will clear before then without a top-up or
+        an upgrade.
+      schema: { type: integer }
+
+  schemas:
+    XLobstack:
+      $ref: "./x_lobstack.schema.json"
+
+    Role:
+      type: string
+      enum: [system, user, assistant, tool]
+
+    ContentPart:
+      type: object
+      description: An OpenAI content part. Passed through to the provider untouched.
+      properties:
+        type: { type: string }
+        text: { type: string }
+      required: [type]
+
+    ToolCall:
+      type: object
+      required: [id, type, function]
+      properties:
+        id: { type: string }
+        type: { type: string, const: function }
+        function:
+          type: object
+          required: [name, arguments]
+          properties:
+            name: { type: string }
+            arguments:
+              type: string
+              description: JSON, as a string. Not an object — this is the OpenAI shape.
+
+    Message:
+      type: object
+      required: [role, content]
+      properties:
+        role: { $ref: "#/components/schemas/Role" }
+        content:
+          description: |
+            A string, or an OpenAI content-part array, which is passed through
+            unchanged. When a model answers with tool calls and no text, the
+            assistant `content` is an empty string rather than null.
+          oneOf:
+            - type: string
+            - type: array
+              items: { $ref: "#/components/schemas/ContentPart" }
+            - type: "null"
+        tool_calls:
+          type: array
+          items: { $ref: "#/components/schemas/ToolCall" }
+          description: On an assistant turn that called tools.
+        tool_call_id:
+          type: string
+          description: On a tool result, echoing the id that was issued.
+        name: { type: string }
+
+    ToolDefinition:
+      type: object
+      required: [type, function]
+      properties:
+        type: { type: string, const: function }
+        function:
+          type: object
+          required: [name]
+          properties:
+            name: { type: string }
+            description: { type: string }
+            parameters:
+              type: object
+              description: |
+                JSON Schema for the arguments. Passed straight through on
+                OpenAI-compatible providers and translated to Anthropic's
+                `input_schema` form for Claude models, so one shape works
+                everywhere.
+
+    ChatCompletionRequest:
+      type: object
+      required: [messages]
+      description: |
+        Only these fields are read. Others are accepted and dropped silently —
+        see the endpoint description.
+      properties:
+        messages:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/Message" }
+          description: An empty array is a `400`.
+        model:
+          type: string
+          default: auto
+          description: |
+            A Lobstack model key, or `auto`. Omitted, the Gateway uses the
+            calling credential's configured model and falls back to `auto`.
+
+            A named model is a CEILING, not a command. `GET /models` lists the
+            keys; an unknown key is a `400`, including after alias resolution.
+          examples: [auto, claude-sonnet-5]
+        stream:
+          type: boolean
+          default: false
+          description: |
+            Server-sent events instead of one JSON body. Routing and quota
+            headers are still sent; the cost headers are not, because token
+            counts do not exist when the headers flush. See rule 2.
+        max_tokens:
+          type: integer
+          minimum: 1
+          description: |
+            Defaults to 4096 for Anthropic and classic OpenAI-compatible
+            providers, and to 8192 for OpenAI's GPT-5 and o-series models, where
+            it is sent as `max_completion_tokens` because those models reject
+            `max_tokens`.
+        temperature:
+          type: number
+          description: |
+            Forwarded ONLY when set, and only to models that accept it. The
+            Gateway never invents a default: doing so silently changed the
+            character of every answer.
+
+            Anthropic rejects sampling parameters on Opus 4.7 and later with a
+            hard `400`, so they are dropped for those models and
+            `x-lobstack-dropped-params` says so.
+        tools:
+          type: array
+          items: { $ref: "#/components/schemas/ToolDefinition" }
+        session_id:
+          type: string
+          description: |
+            Free-form grouping key, recorded on the ledger row so a multi-turn
+            conversation can be costed as one thing. Not sent to the provider.
+
+    Usage:
+      type: object
+      required: [prompt_tokens, completion_tokens, total_tokens]
+      description: The provider's own token counts. This is what the ledger prices.
+      properties:
+        prompt_tokens: { type: integer, minimum: 0 }
+        completion_tokens: { type: integer, minimum: 0 }
+        total_tokens: { type: integer, minimum: 0 }
+
+    Choice:
+      type: object
+      required: [index, message, finish_reason]
+      properties:
+        index: { type: integer }
+        message:
+          type: object
+          required: [role, content]
+          properties:
+            role: { type: string, const: assistant }
+            content: { type: string }
+            tool_calls:
+              type: array
+              items: { $ref: "#/components/schemas/ToolCall" }
+        finish_reason:
+          type: string
+          description: "`stop`, `tool_calls`, `length`, or whatever the provider reported."
+
+    ChatCompletion:
+      type: object
+      required: [id, object, created, model, choices, usage]
+      properties:
+        id:
+          type: string
+          description: "`chatcmpl-` followed by the request id, so the answer and its trace row share an identifier."
+        object: { type: string, const: chat.completion }
+        created: { type: integer }
+        model:
+          type: string
+          description: The Lobstack key that actually served the request. Read it rather than assuming it echoes the request.
+        choices:
+          type: array
+          minItems: 1
+          maxItems: 1
+          description: There is always exactly one choice.
+          items: { $ref: "#/components/schemas/Choice" }
+        usage: { $ref: "#/components/schemas/Usage" }
+
+    ChunkChoice:
+      type: object
+      required: [index, delta, finish_reason]
+      properties:
+        index: { type: integer }
+        delta:
+          type: object
+          properties:
+            role: { type: string, const: assistant }
+            content: { type: ["string", "null"] }
+            tool_calls:
+              type: array
+              description: |
+                Assemble BY INDEX, not by arrival order. `id` and
+                `function.name` appear on the first delta for an index and
+                `function.arguments` accumulates across the rest.
+              items:
+                type: object
+                properties:
+                  index: { type: integer }
+                  id: { type: string }
+                  type: { type: string, const: function }
+                  function:
+                    type: object
+                    properties:
+                      name: { type: string }
+                      arguments: { type: string }
+        finish_reason:
+          type: ["string", "null"]
+          description: |
+            Non-null on the chunk where generation stopped. This is NOT the last
+            chunk: the receipt follows it. See rule 2.
+
+    ChatCompletionChunk:
+      type: object
+      required: [id, object, created, model, choices]
+      description: |
+        One streamed chunk. Three kinds occur, distinguishable without
+        heuristics:
+
+        1. the first, carrying `delta.role` and empty content,
+        2. content and tool-call deltas,
+        3. the final one, with an EMPTY `choices` array, carrying `usage` and
+           `x_lobstack`.
+
+        A chunk with empty `choices` and a `usage` member is the receipt frame.
+      properties:
+        id: { type: string }
+        object: { type: string, const: chat.completion.chunk }
+        created: { type: integer }
+        model: { type: string }
+        choices:
+          type: array
+          items: { $ref: "#/components/schemas/ChunkChoice" }
+        usage:
+          description: Present on the final chunk only. Sent unconditionally — `stream_options.include_usage` is not read.
+          $ref: "#/components/schemas/Usage"
+        x_lobstack:
+          description: |
+            The receipt. Present on the final chunk of a Lobstack stream. Its
+            absence means the response came from something that is not this
+            Gateway, or from a Gateway older than this contract — NOT that the
+            request was free.
+          $ref: "#/components/schemas/XLobstack"
+
+    StreamErrorFrame:
+      type: object
+      required: [error]
+      description: |
+        A failure part-way through a stream. The HTTP status is already `200` and
+        its headers are gone, so the error is delivered as a data frame,
+        followed by `data: [DONE]`.
+
+        Note that `error.type` here is the literal `gateway_error` rather than
+        one of the six error classes. The class is recorded on the trace row;
+        group failures through the usage API rather than by parsing streams.
+      properties:
+        error:
+          type: object
+          required: [message, type, code]
+          properties:
+            message: { type: string }
+            type: { type: string, const: gateway_error }
+            code: { type: integer }
+            request_id: { type: string }
+
+    ErrorClass:
+      type: string
+      enum: [auth, quota, validation, provider, timeout, internal]
+      description: |
+        Six classes, chosen so that each implies a different response.
+
+        | class | statuses | whose problem | retry |
+        | --- | --- | --- | --- |
+        | `auth` | 401, 403 | the credential | no |
+        | `quota` | 402, 429 | allowance or rate limit | 402 no, 429 yes |
+        | `validation` | 400, 409, 422 | the request body | no |
+        | `provider` | 502, 503, other 5xx | the upstream provider | yes, with backoff |
+        | `timeout` | 408, 504 | the Gateway gave up waiting | yes |
+        | `internal` | 500 | the Gateway | once, then report it |
+
+        The mapping runs from status to class, so a status the Gateway raises and
+        a status a provider returns land in the same bucket. An unrecognised
+        throw is classified `internal` rather than `provider`.
+
+        A provider `401` is deliberately remapped to `502`: the Gateway's own
+        credential being wrong is not the caller's problem, and reporting it as
+        `401` would send them to check a key that is fine.
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      description: Every Gateway failure has this shape, including those that fail before authentication finishes.
+      properties:
+        error:
+          type: object
+          required: [message, type, code]
+          properties:
+            message: { type: string }
+            type: { $ref: "#/components/schemas/ErrorClass" }
+            code:
+              type: integer
+              description: Repeats the HTTP status.
+            request_id:
+              type: string
+              description: The trace row id, also in `x-lobstack-request-id`.
+
+    PlatformError:
+      type: object
+      required: [error]
+      description: |
+        The platform error shape, used by `/api/v1/*`. Note that `error` is a
+        STRING here, not an object — it differs from the Gateway shape, and a
+        client that parses both needs to know which endpoint it called.
+      properties:
+        error: { type: string }
+        code: { type: string }
+
+    ModelEntry:
+      type: object
+      required: [id, object, owned_by, label, tier, context_window, price_per_mtok, managed]
+      properties:
+        id:
+          type: string
+          description: The Lobstack model key — what to send as `model`.
+        object: { type: string, const: model }
+        owned_by:
+          type: string
+          description: The provider that serves it.
+        label: { type: string }
+        tier:
+          type: string
+          enum: [nano, small, standard, premium, flagship]
+        context_window: { type: integer }
+        price_per_mtok:
+          type: object
+          required: [input, output]
+          description: |
+            USD per million tokens, as provider list prices. Both sides are
+            present for every model in the registry — a model without a price
+            does not appear here, it appears as `x-lobstack-priced: false` on a
+            request that was served by it.
+
+            These are list prices for comparison, not the figure on an invoice.
+            The amount owed for a request comes from the receipt.
+
+            A client MUST NOT default a missing side to zero should a future
+            catalogue omit one.
+          properties:
+            input: { type: number }
+            output: { type: number }
+        managed:
+          type: boolean
+          description: Whether the model can run on Lobstack-held provider keys, as opposed to BYOK only.
+
+    ModelList:
+      type: object
+      required: [object, data]
+      properties:
+        object: { type: string, const: list }
+        data:
+          type: array
+          items: { $ref: "#/components/schemas/ModelEntry" }
+
+    RoutePreviewRequest:
+      type: object
+      required: [prompt]
+      properties:
+        prompt:
+          type: string
+          minLength: 1
+          maxLength: 8000
+          description: The text to score. Longer than 8,000 characters is a `400`.
+        requested_model:
+          type: string
+          default: auto
+          description: An unknown key is a `400`.
+        plan_tier:
+          type: string
+          default: pro
+          description: An unrecognised plan falls back to `pro`, which is a higher ceiling than a free account has.
+        conversation_length:
+          type: integer
+          minimum: 0
+        expected_output_tokens:
+          type: integer
+          minimum: 1
+          maximum: 200000
+          description: Omitted, output is assumed at half the prompt — the common chat ratio, and stated in the response.
+
+    RoutePreview:
+      type: object
+      required:
+        [object, requested_model, plan_tier, complexity, tier, routed, reason, model, token_estimate, cost_usd, baseline, note]
+      properties:
+        object: { type: string, const: routing_preview }
+        requested_model: { type: string }
+        plan_tier: { type: string }
+        complexity: { type: integer, minimum: 0, maximum: 100 }
+        tier:
+          type: string
+          enum: [nano, small, standard, premium, flagship]
+        routed: { type: boolean }
+        reason:
+          type: string
+          description: Why that tier, in one sentence.
+        model:
+          type: object
+          required: [key, label, provider, context_window, price_per_mtok, managed_key_configured]
+          properties:
+            key: { type: string }
+            label: { type: string }
+            provider: { type: ["string", "null"] }
+            context_window: { type: ["integer", "null"] }
+            price_per_mtok:
+              oneOf:
+                - type: object
+                  properties:
+                    input: { type: number }
+                    output: { type: number }
+                - type: "null"
+            managed_key_configured:
+              type: boolean
+              description: |
+                Whether this deployment currently holds a managed key for that
+                provider. A preview can name a model the live path cannot reach;
+                this is how that difference is visible rather than surprising.
+        token_estimate:
+          type: object
+          required: [input, output, method, estimated]
+          properties:
+            input: { type: integer }
+            output: { type: integer }
+            method: { type: string }
+            estimated: { type: boolean, const: true }
+        cost_usd:
+          type: ["number", "null"]
+          description: Null for a model the registry cannot price. An estimate either way — never a charge.
+        baseline:
+          description: |
+            Present only when a model was named AND the router moved away from
+            it. On `auto` there is nothing to compare against, and inventing a
+            baseline is how a savings claim gets manufactured — so it is null.
+          oneOf:
+            - type: object
+              required: [model, label, cost_usd, saving_usd]
+              properties:
+                model: { type: string }
+                label: { type: string }
+                cost_usd: { type: number }
+                saving_usd: { type: number }
+            - type: "null"
+        note: { type: string }
+
+    UsageSummary:
+      type: object
+      required:
+        [requests, errors, error_rate, errors_by_class, prompt_tokens, completion_tokens, total_tokens, cost_usd, p50_latency_ms, p95_latency_ms, p99_latency_ms, streamed]
+      properties:
+        requests: { type: integer }
+        errors: { type: integer }
+        error_rate: { type: number }
+        errors_by_class:
+          type: object
+          additionalProperties: { type: integer }
+        prompt_tokens: { type: integer }
+        completion_tokens: { type: integer }
+        total_tokens: { type: integer }
+        cost_usd:
+          type: number
+          description: |
+            Summed spend. Unpriced rows sum as zero, so this is a FLOOR rather
+            than a total whenever `unpriced_requests` is non-zero.
+        unpriced_requests:
+          type: integer
+          description: Rows the meter could not price. Non-zero on a recent window means an unknown model key is passing through uncosted.
+        p50_latency_ms: { type: ["integer", "null"] }
+        p95_latency_ms: { type: ["integer", "null"] }
+        p99_latency_ms:
+          type: ["integer", "null"]
+          description: True percentiles over the raw values, not an average of per-bucket averages.
+        streamed: { type: integer }
+
+    UsageGroup:
+      type: object
+      required: [key, requests, errors, total_tokens, cost_usd, p50_latency_ms, p95_latency_ms]
+      properties:
+        key: { type: string }
+        requests: { type: integer }
+        errors: { type: integer }
+        total_tokens: { type: integer }
+        cost_usd: { type: number }
+        unpriced_requests: { type: integer }
+        p50_latency_ms: { type: ["integer", "null"] }
+        p95_latency_ms: { type: ["integer", "null"] }
+
+    UsageReport:
+      oneOf:
+        - type: object
+          title: Enabled
+          required: [enabled, org_id, range, group_by, summary, groups, truncated]
+          properties:
+            enabled: { type: boolean, const: true }
+            org_id: { type: string }
+            authenticated_via: { type: string, enum: [session, api_key] }
+            range: { type: string }
+            group_by: { type: string }
+            summary: { $ref: "#/components/schemas/UsageSummary" }
+            groups:
+              type: array
+              items: { $ref: "#/components/schemas/UsageGroup" }
+            truncated:
+              type: boolean
+              description: True when the row cap bound. The sums are then a floor rather than a total.
+        - type: object
+          title: NotMigrated
+          required: [enabled, reason, message, org_id, summary, groups, truncated]
+          properties:
+            enabled: { type: boolean, const: false }
+            reason: { type: string, const: request_tracing_not_migrated }
+            message: { type: string }
+            org_id: { type: string }
+            range: { type: string }
+            group_by: { type: string }
+            summary: { type: "null" }
+            groups: { type: array, maxItems: 0 }
+            truncated: { type: boolean, const: false }
+
+  responses:
+    ValidationError:
+      description: |
+        The request was malformed and will fail identically until it changes.
+        Causes: `messages` missing or empty; a body that is not JSON; an unknown
+        model key; a model that exists but is not available in managed mode; BYOK
+        mode with no key on the agent. A provider `400` also lands here, with the
+        provider's own message inside.
+      headers:
+        x-lobstack-request-id: { $ref: "#/components/headers/RequestId" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+          example:
+            error:
+              message: "messages[] is required"
+              type: validation
+              code: 400
+              request_id: 8f2b1e0c-4d5a-4b91-9c3e-6a7f0d2b5c41
+    AuthError:
+      description: |
+        The credential was rejected: no bearer token; a key that does not match
+        the `lsk_<env>_<8 hex><48 hex>` shape; a key that is unknown, revoked or
+        expired. Never retry.
+
+        **If the message says "missing credentials" while a key was definitely
+        sent, suspect the apex.** `https://lobstack.ai` redirects to
+        `https://www.lobstack.ai` and a conforming client drops `Authorization`
+        across the host change, so the Gateway sees no credential at all. Call
+        the `www` host directly. See rule 1.
+      headers:
+        x-lobstack-request-id: { $ref: "#/components/headers/RequestId" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+          example:
+            error:
+              message: "missing credentials: no Authorization header reached the Gateway. Send an API key as a Bearer token."
+              type: auth
+              code: 401
+              request_id: 8f2b1e0c-4d5a-4b91-9c3e-6a7f0d2b5c41
+    Forbidden:
+      description: |
+        Authenticated but not permitted: a key without the required scope, or an
+        agent credential whose machine is not running.
+      headers:
+        x-lobstack-request-id: { $ref: "#/components/headers/RequestId" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+          example:
+            error:
+              message: 'this API key lacks the "inference" scope'
+              type: auth
+              code: 403
+              request_id: 8f2b1e0c-4d5a-4b91-9c3e-6a7f0d2b5c41
+    QuotaExhausted:
+      description: |
+        The allowance for the period is gone. The quota headers name which meter
+        applied and the message is phrased in that meter's units: a dollar figure
+        quoted to somebody who bought messages, or a request count quoted to
+        somebody who bought dollars, is a broken promise either way.
+
+        Enforcement is asymmetric on purpose: API keys are enforced, agent
+        credentials receive the quota headers but are not blocked.
+      headers:
+        x-lobstack-request-id: { $ref: "#/components/headers/RequestId" }
+        retry-after: { $ref: "#/components/headers/RetryAfter" }
+        x-lobstack-quota-meter: { $ref: "#/components/headers/QuotaMeter" }
+        x-lobstack-quota-allowance-usd: { $ref: "#/components/headers/QuotaAllowanceUsd" }
+        x-lobstack-quota-spent-usd: { $ref: "#/components/headers/QuotaSpentUsd" }
+        x-lobstack-quota-remaining-usd: { $ref: "#/components/headers/QuotaRemainingUsd" }
+        x-lobstack-quota-limit: { $ref: "#/components/headers/QuotaLimit" }
+        x-lobstack-quota-used: { $ref: "#/components/headers/QuotaUsed" }
+        x-lobstack-quota-remaining: { $ref: "#/components/headers/QuotaRemaining" }
+        x-lobstack-quota-credits: { $ref: "#/components/headers/QuotaCredits" }
+        x-lobstack-quota-resets: { $ref: "#/components/headers/QuotaResets" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+          examples:
+            spend:
+              summary: A spend meter
+              value:
+                error:
+                  message: "monthly allowance exhausted ($10.00 of $10.00 of model spend). Add a top-up or upgrade the plan, or wait for the period to reset."
+                  type: quota
+                  code: 402
+                  request_id: 8f2b1e0c-4d5a-4b91-9c3e-6a7f0d2b5c41
+            requests:
+              summary: A request or legacy meter
+              value:
+                error:
+                  message: "monthly allowance exhausted (100,000 of 100,000 requests). Upgrade the plan or wait for the period to reset."
+                  type: quota
+                  code: 402
+                  request_id: 8f2b1e0c-4d5a-4b91-9c3e-6a7f0d2b5c41
+    Conflict:
+      description: The credential is bound to something that no longer exists, e.g. a key bound to a destroyed agent.
+      headers:
+        x-lobstack-request-id: { $ref: "#/components/headers/RequestId" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+    RateLimited:
+      description: A rate limit was hit — in practice the provider's, passed through with its status. Back off exponentially with jitter.
+      headers:
+        x-lobstack-request-id: { $ref: "#/components/headers/RequestId" }
+        retry-after: { $ref: "#/components/headers/RetryAfter" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+    InternalError:
+      description: A Gateway bug. Retry once; if it repeats, quote the request id — the trace row holds the status, latency, model, credential and the first 1,000 characters of the error.
+      headers:
+        x-lobstack-request-id: { $ref: "#/components/headers/RequestId" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+    ProviderError:
+      description: |
+        The upstream provider failed, or the network call to it threw. Retry with
+        exponential backoff and jitter. A provider `401` arrives here as `502` by
+        design.
+      headers:
+        x-lobstack-request-id: { $ref: "#/components/headers/RequestId" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+          example:
+            error:
+              message: "provider error 529: overloaded"
+              type: provider
+              code: 502
+              request_id: 8f2b1e0c-4d5a-4b91-9c3e-6a7f0d2b5c41
+    NotConfigured:
+      description: |
+        No managed provider key is configured on the deployment, or the model is
+        unavailable there. Unlike other `provider` failures this one will NOT
+        clear on retry: it is a configuration problem.
+      headers:
+        x-lobstack-request-id: { $ref: "#/components/headers/RequestId" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+    Timeout:
+      description: |
+        The provider call was aborted. Adapters abort at 120 seconds; the route
+        allows up to 300. Retryable — but there is no idempotency key, so the
+        first attempt may already have completed and been metered.
+      headers:
+        x-lobstack-request-id: { $ref: "#/components/headers/RequestId" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  examples:
+    BufferedCompletion:
+      summary: A buffered completion, routed away from the model that was named
+      value:
+        id: chatcmpl-8f2b1e0c-4d5a-4b91-9c3e-6a7f0d2b5c41
+        object: chat.completion
+        created: 1789000000
+        model: gemini-3.1-flash-lite
+        choices:
+          - index: 0
+            message:
+              role: assistant
+              content: Western European Summer Time, UTC+1.
+            finish_reason: stop
+        usage:
+          prompt_tokens: 14
+          completion_tokens: 9
+          total_tokens: 23
+    ModelList:
+      summary: One entry per model, with tier, context window and list prices
+      value:
+        object: list
+        data:
+          - id: claude-haiku-4-5
+            object: model
+            owned_by: anthropic
+            label: Claude Haiku 4.5
+            tier: small
+            context_window: 200000
+            price_per_mtok: { input: 1, output: 5 }
+            managed: true
+          - id: claude-opus-5
+            object: model
+            owned_by: anthropic
+            label: Claude Opus 5
+            tier: flagship
+            context_window: 1000000
+            price_per_mtok: { input: 5, output: 25 }
+            managed: true
+          - id: qwen3.7-plus
+            object: model
+            owned_by: alibaba
+            label: Qwen 3.7 Plus
+            tier: standard
+            context_window: 1000000
+            price_per_mtok: { input: 0.4, output: 1.6 }
+            managed: true

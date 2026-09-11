@@ -1,0 +1,12 @@
+{
+  "request_id": "7a8b9c0d-1e2f-4a3b-8c4d-5e6f7a8b9c0d",
+  "served_model": "claude-haiku-4-5",
+  "requested_model": "auto",
+  "routed": true,
+  "cost_usd": 0.0011,
+  "savings_usd": 0.0044,
+  "priced": true,
+  "baseline_model": "claude-fable-5-1",
+  "baseline_reason": null,
+  "baseline_cost_usd": 0.0055
+}

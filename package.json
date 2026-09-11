@@ -1,0 +1,66 @@
+{
+  "name": "@lobstack/gateway",
+  "version": "0.1.0",
+  "description": "Typed client and published contract for the Lobstack Gateway: OpenAI-compatible inference with a per-request receipt.",
+  "type": "module",
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./spec/openapi.yaml": "./spec/openapi.yaml",
+    "./spec/x_lobstack.schema.json": "./spec/x_lobstack.schema.json",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "spec",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "spec:openapi": "node scripts/validate-openapi.mjs",
+    "spec:schema": "node scripts/validate-schema.mjs",
+    "spec": "npm run spec:openapi && npm run spec:schema",
+    "verify": "npm run typecheck && npm run spec && npm run test",
+    "prepublishOnly": "npm run verify"
+  },
+  "devDependencies": {
+    "@redocly/cli": "^2.52.0",
+    "@seriousme/openapi-schema-validator": "^2.9.1",
+    "@types/node": "^22.20.2",
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
+    "typescript": "^5.9.3",
+    "yaml": "^2.8.1"
+  },
+  "keywords": [
+    "lobstack",
+    "llm",
+    "gateway",
+    "openai-compatible",
+    "openapi",
+    "json-schema",
+    "cost",
+    "metering",
+    "routing"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Lobstack-ai/lobstack-gateway.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Lobstack-ai/lobstack-gateway/issues"
+  },
+  "homepage": "https://www.lobstack.ai/docs/gateway"
+}

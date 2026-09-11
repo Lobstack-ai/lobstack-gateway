@@ -1,0 +1,30 @@
+# Lint configuration for `npm run spec:openapi`.
+#
+# The recommended ruleset is used as published, with two rules turned off. Both
+# are turned off for a stated reason rather than to make a warning go away, and
+# both are covered by something stricter elsewhere.
+
+extends:
+  - recommended
+
+rules:
+  # Redocly validates an `example` by injecting `unevaluatedProperties: false`,
+  # which mis-evaluates a JSON Schema 2020-12 document that uses `if`/`then`
+  # inside `allOf` — every member of the receipt is reported as "unevaluated"
+  # even though the schema plainly declares it. spec/x_lobstack.schema.json is
+  # exactly that kind of document, on purpose: the conditionals are what encode
+  # "priced false implies a null cost" and "a baseline never travels without its
+  # reason".
+  #
+  # Ajv, the reference implementation, evaluates it correctly, and
+  # `npm run spec:schema` validates every example in the schema plus twelve
+  # fixtures — six that must pass and six that must FAIL — against it. That is
+  # strictly more coverage than this rule provides, so nothing is lost.
+  no-invalid-schema-examples: off
+
+  # `GET /models` is a pure read of an in-memory registry. It has no 4xx of its
+  # own: no body to reject, no credential to refuse. Declaring a fabricated one
+  # to satisfy a lint rule would put a statement in the contract that is not
+  # true of the implementation, which is a worse outcome than this warning. The
+  # other three operations declare their full status set.
+  operation-4xx-response: off

@@ -1,0 +1,12 @@
+{
+  "request_id": "3e5f7a91-4c22-4b6d-90ab-11d2e3f4a5b6",
+  "served_model": "llama-4-scout-local",
+  "requested_model": "auto",
+  "routed": true,
+  "cost_usd": 0,
+  "savings_usd": null,
+  "priced": false,
+  "baseline_model": null,
+  "baseline_reason": null,
+  "baseline_cost_usd": null
+}

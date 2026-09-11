@@ -1,0 +1,12 @@
+{
+  "request_id": "0f1e2d3c-4b5a-4968-8776-5a4b3c2d1e0f",
+  "served_model": "claude-haiku-4-5",
+  "requested_model": "auto",
+  "routed": true,
+  "cost_usd": 0.0011,
+  "savings_usd": 0.0044,
+  "priced": true,
+  "baseline_model": null,
+  "baseline_reason": "plan_ceiling",
+  "baseline_cost_usd": 0.0055
+}

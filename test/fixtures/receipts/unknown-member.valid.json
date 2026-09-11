@@ -1,0 +1,13 @@
+{
+  "request_id": "9c1f2d70-5b88-4de1-a0c3-7f4e6b2a1d09",
+  "served_model": "grok-4.6",
+  "requested_model": "auto",
+  "routed": true,
+  "cost_usd": 0.000412,
+  "savings_usd": null,
+  "priced": true,
+  "baseline_model": null,
+  "baseline_reason": null,
+  "baseline_cost_usd": null,
+  "some_future_field": { "added": "by a later Gateway" }
+}

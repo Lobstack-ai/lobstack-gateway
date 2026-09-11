@@ -1,0 +1,12 @@
+{
+  "request_id": "6d0e3b95-1f4a-4a20-8c77-2b5d9e0a4411",
+  "served_model": "claude-opus-5",
+  "requested_model": "claude-opus-5",
+  "routed": false,
+  "cost_usd": 0.021875,
+  "savings_usd": null,
+  "priced": true,
+  "baseline_model": null,
+  "baseline_reason": null,
+  "baseline_cost_usd": null
+}
