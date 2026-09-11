@@ -1,4 +1,4 @@
-# @lobstack/gateway
+# @lobstack-ai/gateway
 
 A typed client for the Lobstack Gateway, and the published contract it speaks.
 
@@ -31,12 +31,12 @@ traffic yet, so any number of that kind would be made up.
 ## 60-second quickstart
 
 ```bash
-npm install @lobstack/gateway
+npm install @lobstack-ai/gateway
 export LOBSTACK_API_KEY=lsk_live_…   # mint one in the Console; needs the `inference` scope
 ```
 
 ```ts
-import { LobstackGateway, describeSavings, formatCostUsd } from "@lobstack/gateway";
+import { LobstackGateway, describeSavings, formatCostUsd } from "@lobstack-ai/gateway";
 
 const lobstack = new LobstackGateway(); // base URL and key have sane defaults
 

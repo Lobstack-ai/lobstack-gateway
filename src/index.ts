@@ -1,5 +1,5 @@
 /**
- * @lobstack/gateway — a typed client for the Lobstack Gateway, and the
+ * @lobstack-ai/gateway — a typed client for the Lobstack Gateway, and the
  * published contract it speaks.
  *
  * The spec lives beside this code: `spec/openapi.yaml` describes the endpoints

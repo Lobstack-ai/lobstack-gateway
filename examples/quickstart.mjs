@@ -3,7 +3,7 @@
  *
  *   LOBSTACK_API_KEY=lsk_live_… node examples/quickstart.mjs "why did the deploy roll back?"
  *
- * In your own project the import is `@lobstack/gateway`; inside this repo it is
+ * In your own project the import is `@lobstack-ai/gateway`; inside this repo it is
  * the built output, so `npm run build` first.
  */
 import { LobstackGateway, describeSavings, formatCostUsd } from "../dist/index.js";
