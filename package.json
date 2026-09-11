@@ -67,8 +67,5 @@
     "url": "https://github.com/Lobstack-ai/lobstack-gateway/issues"
   },
   "homepage": "https://www.lobstack.ai/docs/gateway",
-  "author": "Lobstack",
-  "publishConfig": {
-    "access": "public"
-  }
+  "author": "Lobstack"
 }
