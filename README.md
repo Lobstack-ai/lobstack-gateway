@@ -41,6 +41,7 @@ import { LobstackGateway, describeSavings, formatCostUsd } from "@lobstack-ai/ga
 const lobstack = new LobstackGateway(); // base URL and key have sane defaults
 
 const { text, usage, receipt } = await lobstack.streamChat(
+  // "auto" is Nex 1, the router: it scores the request and picks the tier.
   { model: "auto", messages: [{ role: "user", content: "Why did the deploy roll back?" }] },
   { onText: (delta) => process.stdout.write(delta) },
 );
@@ -67,6 +68,12 @@ const { completion, receipt } = await lobstack.chat({
 
 Also on the client: `models()`, `routePreview()` (public, unauthenticated, costs
 nothing), `usage()`, and `stream()` for the raw typed event stream.
+
+`models()` leads with `auto` — Nex 1 — carrying `tier: "router"` and a null
+price. That null is not the unpriced case described below: a router's cost is
+whichever model it picks, so there is no figure to give until a request is
+scored. Everything after it is a concrete model with a concrete rate. The same
+catalogue is public at <https://www.lobstack.ai/models>.
 
 Runnable versions of both, plus the same thing implemented in forty lines of
 plain `fetch`, are in [`examples/`](examples).
