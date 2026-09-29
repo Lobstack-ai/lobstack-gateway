@@ -43,14 +43,14 @@ export interface LobstackGatewayOptions {
   /** An API key (`lsk_live_…`). Defaults to `process.env.LOBSTACK_API_KEY`. */
   apiKey?: string | null;
   /**
-   * The Gateway base URL. Defaults to `process.env.LOBSTACK_BASE_URL`, then to
+   * The API's base URL. Defaults to `process.env.LOBSTACK_BASE_URL`, then to
    * `https://www.lobstack.ai/api/gateway/v1` — with the `www`. The apex 307s
    * and a redirect across hosts strips `Authorization`.
    */
   baseUrl?: string;
   /**
    * Where the platform API lives, for `usage()`. Derived from `baseUrl` unless
-   * you set it: the usage endpoint is NOT under the Gateway base.
+   * you set it: the usage endpoint is NOT under `/api/gateway/v1`.
    */
   platformBaseUrl?: string;
   fetch?: FetchLike;
@@ -106,12 +106,12 @@ export interface UsageQuery {
 }
 
 /**
- * A typed client for the Lobstack Gateway.
+ * A typed client for the Lobstack API.
  *
  * Three things it does that a plain `fetch` will not:
  *
  *   1. It refuses to follow a redirect. A cross-host redirect strips
- *      `Authorization` (RFC 9110 §15.4) and the Gateway then answers a good key
+ *      `Authorization` (RFC 9110 §15.4) and the API then answers a good key
  *      with "missing credentials" — an error that names the wrong thing.
  *   2. It reads the receipt off the final SSE frame, which arrives AFTER the
  *      chunk carrying `finish_reason`.
@@ -166,7 +166,7 @@ export class LobstackGateway {
         code: "credential_shape",
         message:
           "the credential does not look like an API key (lsk_live_ or lsk_test_, then 56 hex characters). " +
-          "A legacy agent gateway token is also accepted by the Gateway, so this is not necessarily wrong — " +
+          "A legacy agent gateway token is also accepted by the Lobstack API, so this is not necessarily wrong — " +
           "but a typo in a key produces a 401 that reads like a server problem.",
       });
     }
@@ -185,7 +185,7 @@ export class LobstackGateway {
 
     const completion = (await response.json()) as ChatCompletion;
     const receipt = receiptFromHeaders(response.headers);
-    // The Gateway does not echo the requested model in a header; the caller's
+    // The API does not echo the requested model in a header; the caller's
     // own request is the only place it exists on this path.
     const requested = request.model ?? null;
 
@@ -212,7 +212,7 @@ export class LobstackGateway {
 
     const body = response.body;
     if (!body) {
-      throw new LobstackError("the Gateway returned no response body for a streamed request", {
+      throw new LobstackError("the Lobstack API returned no response body for a streamed request", {
         status: response.status,
         requestId: response.headers.get("x-lobstack-request-id"),
       });
@@ -235,7 +235,7 @@ export class LobstackGateway {
         code: "no_receipt",
         message:
           "this streamed response carried no x_lobstack frame, so there is no price to report. " +
-          "That is an older Gateway or a base URL that is not a Lobstack Gateway — do not fall back to pricing the token counts yourself.",
+          "That is an older version of the Lobstack API or a base URL that is not the Lobstack API — do not fall back to pricing the token counts yourself.",
       });
     }
 
@@ -269,7 +269,7 @@ export class LobstackGateway {
 
     const body = response.body;
     if (!body) {
-      throw new LobstackError("the Gateway returned no response body for a streamed request", {
+      throw new LobstackError("the Lobstack API returned no response body for a streamed request", {
         status: response.status,
         requestId: response.headers.get("x-lobstack-request-id"),
       });
@@ -280,7 +280,7 @@ export class LobstackGateway {
 
   /* ── Catalogue and preview ──────────────────────────────────────────────── */
 
-  /** Everything the Gateway serves, with tier, context window and list prices. */
+  /** Everything the Lobstack API serves, with tier, context window and list prices. */
   async models(options: RequestOptions = {}): Promise<GatewayModel[]> {
     const response = await this.#request("/models", {
       method: "GET",
@@ -316,7 +316,7 @@ export class LobstackGateway {
    * Org-scoped usage, traces and latency.
    *
    * Needs a key with the `usage:read` scope, and lives at `/api/v1/usage` —
-   * NOT under the Gateway base URL.
+   * NOT under the `/api/gateway/v1` base URL.
    */
   async usage(query: UsageQuery = {}, options: RequestOptions = {}): Promise<UsageReport> {
     const params = new URLSearchParams();
@@ -469,7 +469,7 @@ async function toGatewayError(response: Response, url: string): Promise<Lobstack
 function hintFor(status: number, message: string): string | null {
   if (status === 401 && /missing credentials/i.test(message)) {
     return (
-      "The Gateway saw no Authorization header at all. The usual cause is the apex: " +
+      "The Lobstack API saw no Authorization header at all. The usual cause is the apex: " +
       "https://lobstack.ai 307s to https://www.lobstack.ai, and a client must drop the header " +
       "across a host change (RFC 9110). Call https://www.lobstack.ai/api/gateway/v1 directly."
     );
@@ -488,7 +488,7 @@ function hintFor(status: number, message: string): string | null {
     return "This is a deployment configuration problem and will not clear on retry: a managed provider key is missing.";
   }
   if (status >= 500) {
-    return "Retry with backoff. The Gateway accepts no idempotency key, so a request that timed out may already have completed and been metered.";
+    return "Retry with backoff. The Lobstack API accepts no idempotency key, so a request that timed out may already have completed and been metered.";
   }
   return null;
 }

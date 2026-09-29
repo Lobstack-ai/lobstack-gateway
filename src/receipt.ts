@@ -57,8 +57,8 @@ export type PricedFrom =
   /** `x_lobstack` on the final SSE frame, on a streamed response. */
   | "stream_frame"
   /**
-   * Nowhere. The response carried no receipt at all — an older Gateway, or a
-   * base URL that is not a Lobstack Gateway. `costUsd` is null because nothing
+   * Nowhere. The response carried no receipt at all — an older version of the
+   * Lobstack API, or a base URL that is not the Lobstack API. `costUsd` is null because nothing
    * was reported, NOT because the call was free. Say so in your UI.
    */
   | "none";
@@ -81,7 +81,7 @@ export interface CountedQuota {
   used: number | null;
   /** Limit minus used, plus credits. Never negative. */
   remaining: number | null;
-  /** Purchased top-up remaining. Zero unless the Gateway sent a figure. */
+  /** Purchased top-up remaining. Zero unless the API sent a figure. */
   credits: number;
   resetsAt: string | null;
   retryAfterSeconds: number | null;
@@ -127,7 +127,7 @@ export interface Receipt {
   /**
    * What you owe for these tokens, in USD.
    *
-   * `null` means UNPRICED — the Gateway could not price the served model, or
+   * `null` means UNPRICED — the API could not price the served model, or
    * the request was never metered. It does not mean free and it does not mean
    * zero. Render it as unknown; rendering it as `$0.00` writes off a real
    * charge, which is exactly the bug this field is nullable to prevent.
@@ -174,7 +174,7 @@ export interface Receipt {
   /** What the baseline model would have charged for these exact token counts. */
   baselineCostUsd: number | null;
 
-  /** Sampling parameters the Gateway dropped rather than forwarding. */
+  /** Sampling parameters the API dropped rather than forwarding. */
   droppedParams: string[];
 
   /** Where the caller stands against its allowance, when there is one. */
@@ -194,7 +194,7 @@ export interface HeaderBag {
 /**
  * Read a numeric header.
  *
- * The Gateway sends an EMPTY STRING, not `0`, where the honest answer is "no
+ * The API sends an EMPTY STRING, not `0`, where the honest answer is "no
  * number" — an unpriced model, or no baseline. `Number("")` is `0`, which is
  * how a careless parse turns "we could not price this" into "this was free".
  */
@@ -346,7 +346,7 @@ export function parseReceiptFrame(chunk: unknown): XLobstack | null {
  * Combine the routing and quota facts from a stream's headers with the money
  * from its final frame.
  *
- * When no frame arrived — an older Gateway, or a base URL that is not ours —
+ * When no frame arrived — an older version of the API, or a base URL that is not ours —
  * the money stays null and `pricedFrom` is `"none"`, which is a different
  * statement from `priced: false` and should read differently in a UI.
  */
@@ -368,7 +368,7 @@ export function mergeStreamReceipt(base: Receipt, frame: XLobstack | null): Rece
   };
 }
 
-/** True when the Gateway put a real price on this request. */
+/** True when the API put a real price on this request. */
 export function isPriced(receipt: Pick<Receipt, "costUsd">): receipt is Receipt & { costUsd: number } {
   return typeof receipt.costUsd === "number";
 }
@@ -383,7 +383,7 @@ export function requirePriced(receipt: Receipt): number {
   if (typeof receipt.costUsd === "number") return receipt.costUsd;
   throw new Error(
     receipt.pricedFrom === "none"
-      ? "this response carried no Lobstack receipt, so there is no cost to read (an older Gateway, or a base URL that is not a Lobstack Gateway)"
-      : "the Gateway could not price this request (cost_usd is null, which means unpriced — not free)",
+      ? "this response carried no Lobstack receipt, so there is no cost to read (an older version of the Lobstack API, or a base URL that is not the Lobstack API)"
+      : "the Lobstack API could not price this request (cost_usd is null, which means unpriced — not free)",
   );
 }

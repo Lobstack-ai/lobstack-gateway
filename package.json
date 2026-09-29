@@ -1,6 +1,6 @@
 {
   "name": "@lobstack-ai/gateway",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Typed client and published contract for the Lobstack API: OpenAI-compatible inference with a per-request receipt.",
   "type": "module",
   "license": "MIT",
