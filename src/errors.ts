@@ -1,7 +1,7 @@
 import type { QuotaSnapshot } from "./receipt.js";
 
 /**
- * The six error classes the Gateway returns. Each implies a different response,
+ * The six error classes the Lobstack API returns. Each implies a different response,
  * which is the whole reason the taxonomy is small.
  */
 export type GatewayErrorClass =
@@ -25,7 +25,7 @@ export interface LobstackErrorInit {
 export class LobstackError extends Error {
   /** HTTP status, or null for a client-side failure that never left the process. */
   readonly status: number | null;
-  /** The Gateway's `error.type`. Null when the failure was not the Gateway's. */
+  /** The API's `error.type`. Null when the failure was not the API's. */
   readonly errorClass: GatewayErrorClass | string | null;
   /** `x-lobstack-request-id`. Quote it in a support thread and it becomes a lookup. */
   readonly requestId: string | null;
@@ -47,7 +47,7 @@ export class LobstackError extends Error {
   /**
    * Whether retrying this exact request could plausibly succeed.
    *
-   * Note that the Gateway accepts no idempotency key: a timed-out request may
+   * Note that the API accepts no idempotency key: a timed-out request may
    * still have completed and been metered upstream, so an automatic retry can
    * produce a second answer and a second charge. Retryable means "the failure
    * is transient", not "retrying is free".
@@ -78,7 +78,7 @@ export class LobstackConfigError extends LobstackError {
 }
 
 /**
- * The Gateway answered with a redirect, and this SDK did not follow it.
+ * The Lobstack API answered with a redirect, and this SDK did not follow it.
  *
  * RFC 9110 §15.4 requires a client to drop `Authorization` when a redirect
  * changes the host. Following one would strip the credential and turn a valid
@@ -100,14 +100,14 @@ export class CrossHostRedirectError extends LobstackError {
   }) {
     super(
       args.crossHost
-        ? `the Gateway redirected ${args.from} to ${args.location ?? "another host"} (${args.status}), and this SDK will not follow it: a redirect across hosts strips the Authorization header, so the credential would never arrive`
-        : `the Gateway redirected ${args.from} to ${args.location ?? "elsewhere"} (${args.status}), and this SDK does not follow redirects`,
+        ? `the Lobstack API redirected ${args.from} to ${args.location ?? "another host"} (${args.status}), and this SDK will not follow it: a redirect across hosts strips the Authorization header, so the credential would never arrive`
+        : `the Lobstack API redirected ${args.from} to ${args.location ?? "elsewhere"} (${args.status}), and this SDK does not follow redirects`,
       {
         status: args.status,
         errorClass: "auth",
         requestId: args.requestId ?? null,
         hint: args.crossHost
-          ? "Point baseUrl at the host that answers directly — https://www.lobstack.ai/api/gateway/v1, with the www. The apex 307s, and the Gateway then reports 'missing credentials' for a key that is perfectly good."
+          ? "Point baseUrl at the host that answers directly — https://www.lobstack.ai/api/gateway/v1, with the www. The apex 307s, and the API then reports 'missing credentials' for a key that is perfectly good."
           : "Point baseUrl at the URL that answers directly.",
       },
     );

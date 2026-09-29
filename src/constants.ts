@@ -20,8 +20,11 @@ export const DEFAULT_BASE_URL = "https://www.lobstack.ai/api/gateway/v1";
 /** The platform (non-Gateway) API root, where the usage endpoint lives. */
 export const DEFAULT_PLATFORM_BASE_URL = "https://www.lobstack.ai/api/v1";
 
-/** Kept in step with package.json by hand; it is only ever sent as a label. */
-export const SDK_VERSION = "0.1.0";
+/**
+ * Kept in step with package.json by hand; it is only ever sent as a label.
+ * A test fails when the two disagree — it sat at 0.1.0 through 0.1.1 and 0.1.2.
+ */
+export const SDK_VERSION = "0.1.3";
 
 /** Sent as `x-lobstack-client`, which the Gateway records on the trace row. */
 export const DEFAULT_CLIENT_ID = `lobstack-gateway-sdk/${SDK_VERSION}`;

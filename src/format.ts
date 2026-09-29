@@ -3,7 +3,7 @@ import type { BaselineReason, QuotaSnapshot, Receipt } from "./receipt.js";
 /**
  * Format a cost.
  *
- * `null` is UNPRICED, and it prints as the word, never as a number. The Gateway
+ * `null` is UNPRICED, and it prints as the word, never as a number. The API
  * returns null rather than zero precisely so that a client cannot write a real
  * charge off as free; a formatter that renders it `$0.00` undoes that on the
  * last line of the pipeline.
@@ -47,7 +47,7 @@ export interface SavingsClaim {
  *
  *   `named`         you asked for a model and got a cheaper one. Like-for-like.
  *                   This is the only case that may be labelled "saved".
- *   `plan_ceiling`  you sent `auto` and the Gateway measured against the
+ *   `plan_ceiling`  you sent `auto` and the API measured against the
  *                   priciest model your plan allows — a real comparison, and
  *                   also the most flattering one available to the seller, and
  *                   one you never asked for.
@@ -109,7 +109,7 @@ export function formatReceipt(receipt: Receipt): string {
   if (receipt.pricedFrom === "none") {
     line += "\n  no receipt on this response — the endpoint did not send one";
   } else if (!receipt.priced) {
-    line += "\n  the Gateway could not price this model, so no cost is claimed";
+    line += "\n  the Lobstack API could not price this model, so no cost is claimed";
   }
   if (receipt.metered === false) {
     line += "\n  the ledger write failed — you have your answer, the row is missing";

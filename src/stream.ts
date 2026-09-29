@@ -92,11 +92,11 @@ export async function* streamEvents(
     if (typeof parsed !== "object" || parsed === null) continue;
 
     // A mid-stream failure cannot change the status code, which is already 200,
-    // so the Gateway reports it inside the stream instead.
+    // so the API reports it inside the stream instead.
     const err = (parsed as { error?: { message?: string; code?: number; request_id?: string } })
       .error;
     if (err) {
-      throw new StreamError(err.message ?? "the Gateway reported an error mid-stream", {
+      throw new StreamError(err.message ?? "the Lobstack API reported an error mid-stream", {
         status: typeof err.code === "number" ? err.code : null,
         errorClass: "provider",
         requestId: err.request_id ?? null,

@@ -94,6 +94,7 @@ test("a cross-host redirect is refused, and the refusal names the credential los
         assert.ok(error instanceof CrossHostRedirectError);
         assert.equal(error.crossHost, true);
         assert.equal(error.location, "https://www.example.com/elsewhere");
+        assert.match(error.message, /^the Lobstack API redirected /);
         assert.match(error.message, /will not follow it/);
         assert.match(error.message, /strips the Authorization header/);
         assert.match(error.hint, /www/);
@@ -133,6 +134,7 @@ test("a same-host redirect is refused too, and says something different", async 
         assert.ok(error instanceof CrossHostRedirectError);
         assert.equal(error.crossHost, false, "same origin: the credential would survive");
         assert.doesNotMatch(error.message, /strips the Authorization header/);
+        assert.match(error.message, /^the Lobstack API redirected .* does not follow redirects$/);
         return true;
       },
     );
@@ -317,4 +319,11 @@ test("a credential that is not shaped like a key is flagged, not rejected", () =
 test("calling an authenticated endpoint with no key fails before any request", async () => {
   const client = new LobstackGateway({ apiKey: null, onWarning: () => {} });
   await assert.rejects(() => client.chat({ messages: [] }), LobstackConfigError);
+});
+
+test("SDK_VERSION, sent in x-lobstack-client, matches package.json", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { SDK_VERSION } = await import("../dist/index.js");
+  const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+  assert.equal(SDK_VERSION, pkg.version);
 });

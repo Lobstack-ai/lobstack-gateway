@@ -87,7 +87,8 @@ test("an unpriced call stays null and never renders as a currency amount", async
 
     const line = formatReceipt(result.receipt);
     assert.doesNotMatch(line, /\$0\.0+\b/, "a null cost must not be rendered as $0.00");
-    assert.match(line, /could not price/);
+    assert.match(line, /the Lobstack API could not price/);
+    assert.doesNotMatch(line, /gateway/i);
   } finally {
     await gateway.close();
   }
@@ -181,5 +182,26 @@ test("a mid-stream cut cannot be papered over by an even split", async () => {
     } finally {
       await gateway.close();
     }
+  }
+});
+
+test("an error frame with no message names the Lobstack API, not the gateway", async () => {
+  const { createServer } = await import("node:http");
+  const server = createServer((_req, res) => {
+    res.writeHead(200, { "content-type": "text/event-stream" });
+    res.end('data: {"error":{"code":502}}\n\n');
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  try {
+    const { client } = clientFor({ baseUrl: `http://127.0.0.1:${server.address().port}/api/gateway/v1` });
+    await assert.rejects(
+      () => client.streamChat({ messages: [{ role: "user", content: "hi" }] }),
+      (error) => {
+        assert.equal(error.message, "the Lobstack API reported an error mid-stream");
+        return true;
+      },
+    );
+  } finally {
+    await new Promise((done) => server.close(done));
   }
 });
