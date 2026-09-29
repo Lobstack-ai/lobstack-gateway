@@ -1,9 +1,14 @@
 # @lobstack-ai/gateway
 
-A typed client for the Lobstack Gateway, and the published contract it speaks.
+<p align="center">
+  <img src="docs/lobstack-api.jpg" alt="A receipt on every call. OpenAI-compatible, change one base URL. Beside it, the Lobstack Console request log showing the model asked for, the model that served it, and the cost of each call." width="800">
+</p>
 
-The Gateway is an OpenAI-compatible chat completions endpoint in front of many
-model providers. What makes it worth a client library is not the routing — it is
+A typed client for the Lobstack API, and the published contract it speaks.
+
+The Lobstack API is an OpenAI-compatible chat completions endpoint in front of
+many model providers. It is served at `/api/gateway/v1`, which is where this
+package gets its name. What makes it worth a client library is not the routing — it is
 the **receipt**: every request comes back with what served it, what it cost, and
 what any reported saving was measured against.
 
@@ -12,21 +17,20 @@ contract, so this repository ships both halves:
 
 | | |
 | --- | --- |
-| `src/` | the SDK — what you install to call the Gateway and read the receipt |
+| `src/` | the SDK — what you install to call the API and read the receipt |
 | `spec/openapi.yaml` | the endpoints, their headers and their error classes (OpenAPI 3.1) |
 | `spec/x_lobstack.schema.json` | the receipt itself (JSON Schema 2020-12) |
 
 ## What this repo is not
 
-It is **not the Gateway**. The serving stack — the router, the complexity
+It is **not the API itself**. The serving stack — the router, the complexity
 scorer, tier selection, the metering ledger — is not here and is not described
-here. The spec describes what the Gateway *promises a caller*, which is a
+here. The spec describes what the API *promises a caller*, which is a
 different and smaller thing than how it keeps the promise. A client MUST treat
 the served model as an output, never as something it can predict.
 
 There are no benchmarks, latency figures, uptime numbers or savings percentages
-anywhere in this repository. The metering is new and has not priced production
-traffic yet, so any number of that kind would be made up.
+anywhere in this repository.
 
 ## 60-second quickstart
 
@@ -89,7 +93,7 @@ The base URL is `https://www.lobstack.ai/api/gateway/v1`.
 
 `https://lobstack.ai` answers with a `307` to the `www` host, and RFC 9110 §15.4
 requires a client to drop `Authorization` when a redirect changes host. The
-Gateway then sees a request with no credential at all, cannot tell it apart from
+API then sees a request with no credential at all, cannot tell it apart from
 one that never had a credential, and answers a perfectly valid key with
 `401 missing credentials` — an error that names the wrong thing and sends you to
 look at a key that is fine.
@@ -111,18 +115,18 @@ token. A reader that breaks on `finish_reason` — the obvious thing to write �
 silently discards it. `streamChat()` reads to the end; `stream()` will hand you
 a `{ type: "usage" }` event if you iterate that far.
 
-You do not need `stream_options.include_usage`. The Gateway does not read it and
+You do not need `stream_options.include_usage`. The API does not read it and
 sends the frame regardless.
 
 ### 3. `cost_usd: null` means unpriced, not free
 
-Null means the Gateway could not price the request — the served model is not in
+Null means the API could not price the request — the served model is not in
 the registry, or the request was never metered. It does not mean zero.
 
 Every money field in this SDK is `number | null` and nothing defaults it. There
 is no `costUsd ?? 0` anywhere, `formatCostUsd(null)` returns `"unpriced"`, and
 `requirePriced(receipt)` throws with the reason if you genuinely need a number.
-On the buffered path the Gateway transports the same fact as an **empty header
+On the buffered path the API sends the same fact as an **empty header
 value**, and `Number("")` is `0` — so the SDK's header parser tests for the
 empty string first. A real charge rendered as `$0.00` is the most expensive way
 to be wrong here, and it happened for three months.
@@ -208,12 +212,15 @@ of whichever meter is being exercised.
 
 ## Related
 
-- Published Gateway documentation: <https://www.lobstack.ai/docs/gateway>
-- The Gateway is OpenAI-compatible, so the official OpenAI SDKs work against it
+- The Lobstack API: <https://www.lobstack.ai/api-platform>, and its
+  documentation: <https://www.lobstack.ai/docs/gateway>
+- The API is OpenAI-compatible, so the official OpenAI SDKs work against it
   by changing the base URL and the key. That path is supported and documented;
   what it will not give you is the receipt as a typed value, because a wrapper
   that returns only the parsed body drops the headers.
-- `lobstack`, the CLI, is published separately.
+- [`lobstack`](https://github.com/Lobstack-ai/lobstack-cli), the CLI, and
+  [`@lobstack-ai/mcp`](https://github.com/Lobstack-ai/lobstack-mcp), the MCP
+  server, are published separately.
 
 ## License
 
