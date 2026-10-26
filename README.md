@@ -7,8 +7,8 @@
 A typed client for the Lobstack API, and the published contract it speaks.
 
 The Lobstack API is an OpenAI-compatible chat completions endpoint in front of
-five model providers: Anthropic, OpenAI, Google, xAI and DeepSeek. It is served at `/api/gateway/v1`, which is where this
-package gets its name. What makes it worth a client library is not the routing — it is
+four US model companies: Anthropic, OpenAI, Google and xAI. It is served at
+`/api/gateway/v1`, which is where this package gets its name. What makes it worth a client library is not the routing — it is
 the **receipt**: every request comes back with what served it, what it cost, and
 what any reported saving was measured against.
 
@@ -64,7 +64,7 @@ Buffered instead of streamed:
 
 ```ts
 const { completion, receipt } = await lobstack.chat({
-  model: "claude-sonnet-5",
+  model: "claude-sonnet-5-5",
   max_tokens: 512,
   messages: [{ role: "user", content: "Summarise this changelog in one line." }],
 });
