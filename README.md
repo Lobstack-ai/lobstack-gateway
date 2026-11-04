@@ -1,14 +1,27 @@
-# @lobstack-ai/gateway
+<p>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://www.lobstack.ai/brand/lobstack-mark-light-128.png">
+    <img src="https://www.lobstack.ai/brand/lobstack-mark-128.png" alt="Lobstack" width="44">
+  </picture>
+</p>
+
+# lobstack-gateway
+
+A typed client for the Lobstack API, and the published contract it speaks. On
+npm as `@lobstack-ai/gateway`.
+
+**The human layer for superintelligence.** The Lobstack API is the model layer
+under the Lobstack app, and you can call it from your own code.
 
 <p align="center">
   <img src="docs/lobstack-api.jpg" alt="A receipt on every call. OpenAI-compatible, change one base URL. Beside it, the Lobstack Console request log showing the model asked for, the model that served it, and the cost of each call." width="800">
 </p>
 
-A typed client for the Lobstack API, and the published contract it speaks.
-
 The Lobstack API is an OpenAI-compatible chat completions endpoint in front of
-five model providers: Anthropic, OpenAI, Google, xAI and DeepSeek. It is served at `/api/gateway/v1`, which is where this
-package gets its name. What makes it worth a client library is not the routing — it is
+four US model companies: Anthropic, OpenAI, Google and xAI. There is no
+Anthropic-compatible endpoint. It is served at
+`https://www.lobstack.ai/api/gateway/v1`, which is where this package gets its
+name. What makes it worth a client library is not the routing — it is
 the **receipt**: every request comes back with what served it, what it cost, and
 what any reported saving was measured against.
 
@@ -39,6 +52,9 @@ npm install @lobstack-ai/gateway
 export LOBSTACK_API_KEY=lsk_live_…   # mint one in the Console; needs the `inference` scope
 ```
 
+No key yet? [lobstack.ai/start](https://www.lobstack.ai/start). A new, verified
+account gets $5 of credit for 30 days, with no card and no monthly plan needed.
+
 ```ts
 import { LobstackGateway, describeSavings, formatCostUsd } from "@lobstack-ai/gateway";
 
@@ -64,7 +80,7 @@ Buffered instead of streamed:
 
 ```ts
 const { completion, receipt } = await lobstack.chat({
-  model: "claude-sonnet-5",
+  model: "claude-sonnet-5-5",
   max_tokens: 512,
   messages: [{ role: "user", content: "Summarise this changelog in one line." }],
 });
@@ -225,3 +241,9 @@ of whichever meter is being exercised.
 ## License
 
 MIT
+
+## Links
+
+- [lobstack.ai](https://www.lobstack.ai)
+- [API docs](https://www.lobstack.ai/docs/gateway) · [Docs](https://www.lobstack.ai/docs) · [Models](https://www.lobstack.ai/models)
+- [Download the Lobstack app](https://www.lobstack.ai/download)
